@@ -113,17 +113,19 @@ define(function(require) {
         }
 
         function validateLink(flo, cellViewS, magnetS, cellViewT, magnetT, end, linkView) {
-
             $log.info('SOURCE=' + cellViewS.model.attr('metadata/name') + ' TARGET=' + cellViewT.model.attr('metadata/name'));
-            // Prevent linking from input ports.
+            
+            // Prevent linking FROM node input port
             if (magnetS && magnetS.getAttribute('type') === 'input') {
                 return false;
             }
-            // Prevent linking from output ports to input ports within one element.
+
+            // Prevent linking from output port to input port of same element.
             if (cellViewS === cellViewT) {
                 return false;
             }
-            // Prevent linking to input ports.
+
+            // Prevent linking TO node output port
             if (magnetT && magnetT.getAttribute('type') === 'output') {
                 return false;
             }
@@ -139,16 +141,8 @@ define(function(require) {
                 if (cellViewT.model.attr('metadata/name') === 'tap') {
                     return false;
                 }
-                // Target is a DESTINATION with outgoing links? Disallow, because DESTINATION can either be SOURCE or SINK but not both
-                if (cellViewT.model.attr('metadata/name') === 'destination' && graph.getConnectedLinks(cellViewT.model, { outbound: true }).length ) {
-                    return false;
-                }
                 // Sinks and Tasks cannot have outgoing links
                 if (cellViewS.model.attr('metadata/group') === 'sink' || cellViewS.model.attr('metadata/group') === 'task') {
-                    return false;
-                }
-                // Source is a DESTINATION with incoming links? Disallow, because DESTINATION can either be SOURCE or SINK but not both
-                if (cellViewS.model.attr('metadata/name') === 'destination' && graph.getConnectedLinks(cellViewS.model, { inbound: true }).length) {
                     return false;
                 }
 
@@ -166,7 +160,10 @@ define(function(require) {
                 }
 
                 if (targetIncomingLinks.length > 0) {
-                    return false;
+                    // It is ok if the target is a destination
+                    if (cellViewT.model.attr('metadata/name') !== 'destination') {
+                        return false;
+                    }
                 }
 
                 if (outgoingSourceLinks.length > 0) {
@@ -180,8 +177,9 @@ define(function(require) {
                         }
                     }
 
-                    // Invalid if output-port has more than one outgoing link
-                    if (magnetS.getAttribute('class') === 'output-port') {
+                    // Invalid if output-port has more than one outgoing link (if not destination)
+                    if (magnetS.getAttribute('class') === 'output-port' &&
+                        cellViewS.model.attr('metadata/name') !== 'destination') {
                         for (i = 0; i < outgoingSourceLinks.length; i++) {
                             var selector = outgoingSourceLinks[i].get('source').selector;
                             // Another link from the 'output-port' is present
@@ -404,12 +402,13 @@ define(function(require) {
         }
 
         function validateDestination(element, incoming, outgoing, tap, errors) {
-            if (incoming.length > 0 && outgoing.length > 0) {
-                errors.push({
-                    message: 'Destination should either have input or output but not both at the same time',
-                    range: element.attr('range')
-                });
-            }
+            // Do not enforce this now, a destination can have inputs and outputs
+            // if (incoming.length > 0 && outgoing.length > 0) {
+            //     errors.push({
+            //         message: 'Destination should either have input or output but not both at the same time',
+            //         range: element.attr('range')
+            //     });
+            // }
             if (tap.length !== 0) {
                 errors.push({
                     message: 'Cannot tap into a destination app',
