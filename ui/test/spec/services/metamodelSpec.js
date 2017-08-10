@@ -96,6 +96,51 @@ define(['angular', 'angularMocks', 'app'], function(angular) {
 		expect(link.to).toEqual(1);
 	}));
 
+	/**
+	 * Should produce 3 nodes, with a shared channel node.
+	 */
+	it('shared destination', inject(function(ParserService, StreamMetamodelService) {
+		var text = 'time > :foo\n:foo > log';
+		var parseResponse = ParserService.parse(text);
+		expect(parseResponse.lines).toBeDefined();
+		var line = parseResponse.lines[0];
+		expect(line.errors).toBeNull();
+		expect(StreamMetamodelService.convertParseResponseToGraph).toBeDefined();
+		var graph = StreamMetamodelService.convertParseResponseToGraph(text,parseResponse);
+		// console.log("graph is "+JSON.stringify(graph));
+		//{"errors":[],
+		// "graph":{
+		//   "format":"scdf","streamdefs":[
+		//	    {"name":"","def":"time  > :foo"},
+		//      {"name":"","def":":foo > log"}],
+		//    "nodes":[
+		//      {"id":0,"name":"time","stream-id":1,"range":{"start":{"ch":0,"line":0},"end":{"ch":4,"line":0}}},
+		//      {"id":1,"name":"destination","properties":{"name":"foo"},"stream-id":2},
+		//      {"id":2,"name":"log","range":{"start":{"ch":7,"line":1},"end":{"ch":10,"line":1}}}],
+		//    "links":[{"from":0,"to":1},{"from":1,"to":2}]}}
+		expect(graph.errors.length).toEqual(0);
+		var nodes = graph.graph.nodes;
+		expect(nodes.length).toEqual(3);
+		var timeNode = nodes[0];
+		expect(timeNode.name).toEqual('time');
+		expect(timeNode.id).toEqual(0);
+		var node2 = nodes[1];
+		expect(node2.name).toEqual('destination');
+		expect(node2.properties.name).toEqual('foo');
+		expect(node2.id).toEqual(1);
+		var logNode = nodes[2];
+		expect(logNode.name).toEqual('log');
+		expect(logNode.id).toEqual(2);
+
+		expect(graph.graph.links.length).toEqual(2);
+		var link = graph.graph.links[0];
+		expect(link.from).toEqual(0);
+		expect(link.to).toEqual(1);
+		link = graph.graph.links[1];
+		expect(link.from).toEqual(1);
+		expect(link.to).toEqual(2);
+	}));
+
 	it('tap text to graph', inject(function(ParserService, StreamMetamodelService) {
 		var text = 'FOO = time | log1\n:FOO.time > log2';
 		var parseResponse = ParserService.parse(text);
@@ -130,6 +175,7 @@ define(['angular', 'angularMocks', 'app'], function(angular) {
 		// Verify tap stream
 	}));
 
+// missing infrastructure, convertGraphToText takes a jointjs graph, not a json graph
 //	it('text to graph and back again - basic', inject(function(ParserService, StreamMetamodelService) {
 //		var text = 'time | log';
 //		var parseResponse = ParserService.parse(text);
@@ -138,20 +184,6 @@ define(['angular', 'angularMocks', 'app'], function(angular) {
 //		var newtext = StreamMetamodelService.convertGraphToText(graph);
 //		console.log('>>>>'+newtext);
 ////		expect(newtext).equals(text);
-//	}));
-
-//	it('text to graph and back again - tap', inject(function(ParserService, StreamMetamodelService) {
-//		var text = "FOO = time | log1\n:FOO.time > log2";
-//		var parseResponse = ParserService.parse(text);
-//		expect(parseResponse.lines).toBeDefined();
-//		var line = parseResponse.lines[0];
-//		expect(line.errors).toBeNull();
-//		expect(StreamMetamodelService.convertParseResponseToGraph).toBeDefined();
-//		expect(StreamMetamodelService.convertGraphToText).toBeDefined();
-//
-//		var graph = StreamMetamodelService.convertParseResponseToGraph(text,parseResponse);
-//		var newtext = StreamMetamodelService.convertGraphToText(graph);
-//		expect(newtext).equals(text);
 //	}));
 
   });
