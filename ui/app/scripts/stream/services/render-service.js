@@ -25,7 +25,11 @@ define(function(require) {
 
     var joint = require('joint');
     require('flo');
-    var layout = require('stream/services/layout');
+
+    var dagre = require('dagre');
+
+    // Dagre layout now being used instead
+    // var layout = require('stream/services/layout');
     var utils = require('stream/services/utils');
 
     var HANDLE_ICON_MAP = {
@@ -148,6 +152,7 @@ define(function(require) {
         defaults: joint.util.deepSupplement({
             type: joint.shapes.flo.LINK_TYPE,
             smooth: true,
+//             router: { name: 'metro' },
             attrs: {
                 '.connection': { stroke: '#34302d', 'stroke-width': 2 },
                 '.connection-wrap': { display : 'none' },
@@ -158,7 +163,7 @@ define(function(require) {
     });
 
 
-    return ['$compile', '$rootScope', '$log', 'StreamMetamodelService', 'FloBootstrapTooltip', function($compile, $rootScope, $log, metamodelService, bootstrapTooltip) {
+    return ['$compile', '$rootScope', '$log', 'StreamMetamodelService', 'FloBootstrapTooltip', 'DataflowUtils', function($compile, $rootScope, $log, metamodelService, bootstrapTooltip, dataflowUtils) {
 
         function fitLabel(paper, node, labelPath) {
             var label = node.attr(labelPath);
@@ -534,16 +539,16 @@ define(function(require) {
                     // Set silently, last attr call would refresh the view
                     oldSource.attr('.stream-label/display', 'none', { silent: true });
 
-                    // Can't remove attr and update the view because port marking is being wiped out, so set 'block' display
-                    oldSource.attr('.input-port/display', 'block');
+                //     // Can't remove attr and update the view because port marking is being wiped out, so set 'block' display
+                //     oldSource.attr('.input-port/display', 'block');
                 }
-                // Hide input port for destination if it has a new outgoing link
+                // // Hide input port for destination if it has a new outgoing link
                 if (newSource && newSource.attr('metadata/name') === 'destination') {
                     // Has outgoing link, there shouldn't be any incoming links yet -> show stream name label
                     // Set silently, last attr call would refresh the view
                     newSource.attr('.stream-label/display', 'block', { silent: true });
 
-                    newSource.attr('.input-port/display', 'none');
+                //     newSource.attr('.input-port/display', 'none');
                 }
 
                 // If tap link has been reconnected update the stream-label for the target if necessary
@@ -572,8 +577,8 @@ define(function(require) {
                         // Set silently, last attr call would refresh the view
                         oldTarget.attr('.stream-label/display', 'none', { silent: true });
 
-                        // Can't remove attr and update the view because port marking is being wiped out, so set 'block' display
-                        oldTarget.attr('.output-port/display', 'block');
+                    //     // Can't remove attr and update the view because port marking is being wiped out, so set 'block' display
+                    //     oldTarget.attr('.output-port/display', 'block');
                     }
                 }
                 var newTarget = graph.getCell(newTargetId);
@@ -583,8 +588,8 @@ define(function(require) {
                         // Set silently, last attr call would refresh the view
                         newTarget.attr('.stream-label/display', 'none', { silent: true });
 
-                        // new target is destination? Hide output port then.
-                        newTarget.attr('.output-port/display', 'none');
+                        // // new target is destination? Hide output port then.
+                        // newTarget.attr('.output-port/display', 'none');
                     }
                 }
 
@@ -636,17 +641,18 @@ define(function(require) {
             var graph = paper.model;
             var source = graph.getCell(link.get('source').id);
             var target = graph.getCell(link.get('target').id);
-            if (source && source.attr('metadata/name') === 'destination') {
-                // New outgoing link added, there can't be any incoming links yet -> show stream label
-                // Set silently because explicit update is called next
-                source.attr('.stream-label/display', 'block', { silent: true });
-                source.attr('.input-port/display', 'none');
+            if (source && source.attr('metadata/name') === 'destination' && target) {
+                // A link is added from a source destination to a target. In these cases the
+                // target will show the label (whether a real app or another destination).
+                // This is done so that if a destination is connected to 5 outputs, this destination
+                // won't track the 5 stream names, the nodes it links to will instead.
+                target.attr('.stream-label/display', 'block');//, { silent: true });
             }
             if (target && target.attr('metadata/name') === 'destination') {
                 // Incoming link has been added -> hide stream label
                 // Set silently because update will be called for the next property setting
                 target.attr('.stream-label/display', 'none', { silent: true });
-                target.attr('.output-port/display', 'none');
+                // XXX target.attr('.output-port/display', 'none');
             }
             // If tap link has been added update the stream-label for the target
             if (link.get('source').port === 'tap' && target) {
@@ -685,6 +691,84 @@ define(function(require) {
             }
         }
 
+        function layoutWithDagre(paper) {
+            var start, end, empty = true;
+            var deferred = dataflowUtils.$q.defer();
+            var graph = paper.model;
+
+            var gridSize = paper.options.gridSize;
+            if (gridSize <= 1) {
+                gridSize = IMAGE_H / 2;
+            }
+
+            var g = new dagre.graphlib.Graph();
+            g.setGraph({});
+            g.setDefaultEdgeLabel(function () {
+                return {};
+            });
+
+            graph.getElements().forEach(function (node) {
+                // ignore embedded cells
+                if (!node.get('parent')) {
+                    g.setNode(node.id, node.get('size'));
+
+                    // Determine start and end node
+                    if (node.attr('metadata/name') === joint.shapes.flo.batch.START_NODE_TYPE && node.attr('metadata/group') === joint.shapes.flo.batch.CONTROL_NODES) {
+                        start = node;
+                    } else if (node.attr('metadata/name') === joint.shapes.flo.batch.END_NODE_TYPE && node.attr('metadata/group') === joint.shapes.flo.batch.CONTROL_NODES) {
+                        end = node;
+                    } else {
+                        empty = false;
+                    }
+                }
+            });
+
+            var count = 0;
+            graph.getLinks().forEach(function (link) {
+                if (link.get('source').id && link.get('target').id) {
+                    g.setEdge(link.get('source').id, link.get('target').id,
+                    {weight: (link.get('source').port==='output'?200:1)});
+                    link.set('vertices', []);
+                    count++;
+                }
+            });
+
+            g.graph().rankdir = 'LR';
+            g.graph().marginx = gridSize;
+            g.graph().marginy = gridSize;
+            g.graph().nodesep = 2 * gridSize;
+            g.graph().ranksep = 2 * gridSize;
+            g.graph().edgesep = gridSize;
+
+            if (empty && start && end) {
+                // Only start and end node are present
+                // In this case ensure that start is located above the end. Fake a link between start and end nodes
+                g.setEdge(start.get('id'), end.get('id'), {
+                    minlen: 7
+                });
+
+                g.graph().marginx = 5 * gridSize;
+            }
+
+            dagre.layout(g);
+            g.nodes().forEach(function (v) {
+                var node = graph.getCell(v);
+                if (node) {
+                    var bbox = node.getBBox();
+                    node.translate((g.node(v).x - g.node(v).width / 2) - bbox.x, (g.node(v).y - g.node(v).height / 2) - bbox.y);
+                }
+            });
+
+            g.edges().forEach(function (o) {
+                var edge = g.edge(o);
+                console.log(JSON.stringify(edge.points));
+            });
+            deferred.resolve();
+
+            return deferred.promise;
+
+        }
+
         return {
             'createNode': createNode,
             'createLink': createLink,
@@ -692,7 +776,7 @@ define(function(require) {
             'createDecoration': createDecoration,
             'getLinkView': getLinkView,
             'getNodeView': getNodeView,
-            'layout': layout,
+            'layout': layoutWithDagre,
             'initializeNewLink': initializeNewLink,
             'handleLinkEvent': handleLinkEvent,
             'isSemanticProperty': isSemanticProperty,
