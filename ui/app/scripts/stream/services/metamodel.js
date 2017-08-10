@@ -316,6 +316,18 @@ define(function (require) {
                 });
             }
 
+            function findExistingDestinationNode(nodes, name) {
+                for (var n = 0; n < nodes.length; n++) {
+                    var node = nodes[n];
+                    if (node.name && node.name === 'destination') {
+                        if (node.properties && node.properties.name && node.properties.name === name) {
+                            return node;
+                        }
+                    }
+                }
+                return null;
+            }
+
             function convertParseResponseToGraph(definitionsText, parsedDefinitions) {
                 // Compute line breaks
                 var linebreaks = [0];
@@ -386,27 +398,31 @@ define(function (require) {
                                         // Create new node
                                         var tapName = parsedNode.sourceChannelName.substring(4);
                                         graphNode = {'id': nodeId++, 'name': 'tap', 'properties': {'name': tapName}};
+                                        nodes.push(graphNode);
                                         linkFrom = graphNode.id;
                                     }
                                 } else { // DESTINATION SOURCE
-                                    graphNode = {
-                                        'id': nodeId++,
-                                        'name': 'destination',
-                                        'properties': {'name': parsedNode.sourceChannelName}
-                                    };
+                                    graphNode = findExistingDestinationNode(nodes, parsedNode.sourceChannelName);
+                                    if (!graphNode) {
+                                        graphNode = {
+                                            'id': nodeId++,
+                                            'name': 'destination',
+                                            'properties': {'name': parsedNode.sourceChannelName}
+                                        };
+                                        nodes.push(graphNode);
+                                    }
                                     linkFrom = graphNode.id;
                                 }
-                                if (graphNode) {
-                                    if (parsedNode.group) {
-                                        nameSet = true;
-                                        streamName = parsedNode.group;
-                                        if (!streamName.startsWith('UNKNOWN_')) {
-                                            graphNode['stream-name'] = parsedNode.group;
-                                        }
-                                        graphNode['stream-id'] = streamNumber++;
-                                    }
-                                    nodes.push(graphNode);
-                                }
+                                // if (graphNode) {
+                                //     if (parsedNode.group) {
+                                //         nameSet = true;
+                                //         streamName = parsedNode.group;
+                                //         if (!streamName.startsWith('UNKNOWN_')) {
+                                //             graphNode['stream-name'] = parsedNode.group;
+                                //         }
+                                //         graphNode['stream-id'] = streamNumber++;
+                                //     }
+                                // }
                                 if (channelText.startsWith('tap:')) {
                                     channelText = channelText.substring(3); //TODO tidy up - do it here or sooner?
                                 } else {
@@ -464,11 +480,16 @@ define(function (require) {
 
                             if (parsedNode.sinkChannelName) {
                                 channelText = parsedNode.sinkChannelName;
-                                graphNode = {
-                                    'id': nodeId++,
-                                    'name': 'destination',
-                                    'properties': {'name': channelText}
-                                };
+                                graphNode = null;
+                                graphNode = findExistingDestinationNode(nodes, channelText);
+                                if (!graphNode) {
+                                    graphNode = {
+                                        'id': nodeId++,
+                                        'name': 'destination',
+                                        'properties': {'name': channelText}
+                                    };
+                                    nodes.push(graphNode);
+                                }
                                 if (linkFrom !== -1) {
                                     newlink = {'from': linkFrom, 'to': graphNode.id};
                                     if (linkType) {
@@ -476,9 +497,15 @@ define(function (require) {
                                     }
                                     links.push(newlink);
                                 }
+                                if (!nameSet && parsedNode.group) {
+                                    nameSet = true;
+                                    streamName = parsedNode.group;
+                                    if (!streamName.startsWith('UNKNOWN_')) {
+                                        graphNode['stream-name'] = parsedNode.group;
+                                    }
+                                    graphNode['stream-id'] = streamNumber++;
+                                }
                                 linkFrom = graphNode.id;
-//    						}
-                                nodes.push(graphNode);
                                 if (!parsedNode.sourceChannelName || parsedNode.name !== 'bridge') {
                                     // if it is a bridge then the source channel already added a '>'
                                     streamdef = streamdef + ' > ';
