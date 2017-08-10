@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016 the original author or authors.
+ * Copyright 2015-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 
 /**
- * Convert the text representation of a graph.
+ * Create the text representation of a graph.
  *
  * @author Andy Clement
  * @author Alex Boyko
@@ -81,7 +81,13 @@ define(function () {
 
 	function getName(node) {
 		if (!node) {return 'UNDEFINED';}
-		return node.attr('metadata/name');
+		var name = node.attr('metadata/name');
+		if (name === 'destination') {
+			return node.attr('props').name;
+		}
+		else {
+			return name;
+		}
 	}
 
 	function init(graph) {
@@ -210,20 +216,23 @@ define(function () {
 	}
 
 	/**
-	 * For any node, for the head of the stream containing it. This will not follow tap links so the 'heads' of
-	 * tap streams will also be found (it won't chase the tap link up and find the head of the tapped stream)
+	 * For any node, for the head of the stream containing it. This will not follow tap links so the
+	 * 'heads' of tap streams will also be found (it won't chase the tap link up and
+	 * find the head of the tapped stream). It will also stop at regular destinations and 
+	 * consider the destination a head.
 	 */
 	function findHead(node) {
 		var currentNode = node;
-		var incomingLinks = getIncomingLinks(currentNode);
-		while (incomingLinks.length > 0 && !(incomingLinks.length === 1 && isTapLink(incomingLinks[0]))) {
-			var sourceId = incomingLinks[0].get('source').id;
+		var inLinks = getIncomingLinks(currentNode);
+		while (!isChannel(currentNode) && 
+			   inLinks.length > 0 && !(inLinks.length === 1 && isTapLink(inLinks[0]))) {
+			var sourceId = inLinks[0].get('source').id;
 			if (!sourceId) {
 				// the link to this node is currently being edited, it has not yet been connected to something
-				incomingLinks = [];
+				inLinks = [];
 			} else {
 				currentNode = g.getCell(sourceId);
-				incomingLinks = getIncomingLinks(currentNode);
+				inLinks = getIncomingLinks(currentNode);
 			}
 		}
 		return currentNode;
@@ -283,24 +292,26 @@ define(function () {
 
 	// Walk the graph and produce DSL
 	function processGraph() {
-		if (DEBUG) {console.log('> graph2text');}
-		// 1. Find the obvious stream heads. A stream head is any node without an incoming link or where the incoming link
-		//    is a tap link
+		if (DEBUG) {console.log('> graph-to-text');}
+		// 1. Find the obvious stream heads. A stream head is:
+		//    - any node without an incoming link
+		//    - any node where the incoming link is a tap link
+		//    - any destination node that has an incoming and outgoing link(s)
 		var i;
 		var streamheads=[];
-		var nodesToHead={};
+		// var nodesToHead={};
 		_.forEach(nodesToVisit, function(node) {
 			var head = findHead(node);
 			if (!_.contains(streamheads,head)) {
 				streamheads.push(head);
 			}
-			nodesToHead[node]=head;
 		});
 		if (DEBUG) {
 			console.log('Stream Heads discovered from the graph: ');
 			for (i=0;i<streamheads.length;i++) {
 				console.log(i+') '+getName(streamheads[i]));
 			}
+			console.log('---');
 		}
 		var streams = [];
 		var streamId = 1;
@@ -316,27 +327,40 @@ define(function () {
 				}
 			}
 
-			stream = [headNode];
+			// stream = [headNode];
 			var outgoingLinks = getOutgoingStreamLinks(headNode);
-			while (outgoingLinks.length>0) {
-				var targetId = outgoingLinks[0].get('target').id;
-				if (!targetId) {
-					// This link is not yet connected to something, it is currently being edited
-					outgoingLinks = [];
-				} else {
-					var target = g.getCell(targetId);
-					stream.push(target);
-					outgoingLinks = getOutgoingStreamLinks(target);
+			var toFollow;
+			// If the head is a destination it may have multiple outbound connections, create a stream for each
+			for (var ol = 0; ol < outgoingLinks.length; ol++) {
+				stream = [headNode];
+
+				toFollow = [];
+				toFollow.push(outgoingLinks[ol]);
+				while (toFollow.length > 0) {
+					var targetId = toFollow[0].get('target').id;
+					if (!targetId) {
+						// This link is not yet connected to something, it is currently being edited
+						toFollow = [];
+					} else {
+						var target = g.getCell(targetId);
+						stream.push(target);
+						toFollow = getOutgoingStreamLinks(target);
+						if (isChannel(target)) {
+							// Reached a channel with following outputs, that marks the end of this stream
+							toFollow = [];
+						}
+					}
 				}
+				streamId++;
+				streams.push(stream);
 			}
-			streamId++;
-			streams.push(stream);
 		}
 		if (DEBUG) {
 			console.log('computed streams');
 			_.forEach(streams,function(stream) {
 				printStream(stream);
 			});
+			console.log('---');
 		}
 		// 3. Walk the streams (each is an array of nodes that make up the stream) and produce the DSL text
 		var text = '';
@@ -352,16 +376,27 @@ define(function () {
 			for (i = 0; i < stream.length; i++) {
 				var node = stream[i];
 				if (i === 0) {
-					if (node.attr('stream-name')) {
+					if (!isChannel(node) && node.attr('stream-name')) {
 						console.log('Stream has name ' + node.attr('stream-name'));
 						text += node.attr('stream-name') + '=';
 					}
-					var incomingLinks = getIncomingLinks(node);
-					if (incomingLinks.length > 0) {
-						var sourceId = incomingLinks[0].get('source').id;
-						if (sourceId) {
-							var source = g.getCell(sourceId);
-							text += toTapDestination(source) + ' > ';
+					if (isChannel(node)) {//WithMultipleOutputLinks(node)) {
+						// stream name can be on next node
+						if ((i+1)<stream.length) {
+							var nameOnNextNode = stream[i+1].attr('stream-name');
+							if (nameOnNextNode) {
+								text += nameOnNextNode + '=';
+							}
+						}
+					} else {
+						// This is what you use for 'tap heads' - it inserts the ':xxx.yyy >' bit on the front
+						var incomingLinks = getIncomingLinks(node);
+						if (incomingLinks.length > 0) {
+							var sourceId = incomingLinks[0].get('source').id;
+							if (sourceId) {
+								var source = g.getCell(sourceId);
+								text += toTapDestination(source) + ' > ';
+							}
 						}
 					}
 				}
