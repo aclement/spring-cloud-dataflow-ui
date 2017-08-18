@@ -684,17 +684,11 @@ define(function (require) {
                 var inputlinksCount = inputlinks ? inputlinks.length : 0;
                 for (var l = 0; l < inputlinksCount; l++) {
                     link = inputlinks[l];
-                    if (link.linkType && link.linkType === 'tap') {
-                        flo.createLink({'id': nodesIndex[link.from], 'selector': '.tap-port', 'port': 'tap'},
-                            {'id': nodesIndex[link.to], 'selector': '.input-port', 'port': 'input'});
-                    } else {
-                        flo.createLink({
-                                'id': nodesIndex[link.from],
-                                'selector': '.output-port',
-                                'port': 'output'
-                            },
-                            {'id': nodesIndex[link.to], 'selector': '.input-port', 'port': 'input'});
-                    }
+                    flo.createLink(
+                        {'id': nodesIndex[link.from], 'selector': '.output-port', 'port': 'output' },
+                        {'id': nodesIndex[link.to], 'selector': '.input-port', 'port': 'input'},
+                        {},
+                        {'isTapLink': (link.linkType && link.linkType === 'tap')?'true':'false'});
                 }
 
                 flo.performLayout();

@@ -33,6 +33,9 @@ define(function(require) {
     return [ '$modal', '$log', function ($modal,$log) {
 
         function createHandles(flo, createHandle, element) {
+            if (element instanceof joint.dia.Link) {
+                return;
+            }
             var bbox = element.getBBox();
 
             // Delete handle
@@ -114,6 +117,7 @@ define(function(require) {
 
         function validateLink(flo, cellViewS, magnetS, cellViewT, magnetT, end, linkView) {
             $log.info('SOURCE=' + cellViewS.model.attr('metadata/name') + ' TARGET=' + cellViewT.model.attr('metadata/name'));
+            var idx;
             
             // Prevent linking FROM node input port
             if (magnetS && magnetS.getAttribute('type') === 'input') {
@@ -132,6 +136,21 @@ define(function(require) {
 
             var graph = flo.getGraph();
 
+            if (cellViewS.model.attr) {
+                var currentSourceLinks = graph.getConnectedLinks(cellViewS.model, { outbound: true });
+                idx = currentSourceLinks.indexOf(linkView.model);
+                console.log('Index into outgoing source links for this link = '+idx+' link count = '+(currentSourceLinks.length));
+                // For a second link we will see:
+                // Index into outgoing source links for this link = 1 link count = 2
+                // if (idx > 0) {
+                //     // Dash the link
+                //     _.each(linkView.el.querySelectorAll('.connection, .marker-source, .marker-target'), function(connection) {
+                //         joint.V(connection).addClass('tapped-output-from-app');
+                //     });
+                // }
+            }
+
+
             if (cellViewS.model.attr('metadata') && cellViewT.model.attr('metadata')) {
                 // Target is a SOURCE node? Disallow link!
                 if (cellViewT.model.attr('metadata/group') === 'source') {
@@ -142,11 +161,11 @@ define(function(require) {
                     return false;
                 }
                 // Sinks and Tasks cannot have outgoing links
-                if (cellViewS.model.attr('metadata/group') === 'sink' || cellViewS.model.attr('metadata/group') === 'task') {
+                if (cellViewS.model.attr('metadata/group') === 'sink' || 
+                    cellViewS.model.attr('metadata/group') === 'task') {
                     return false;
                 }
 
-                var idx;
                 var i;
                 var targetIncomingLinks = graph.getConnectedLinks(cellViewT.model, { inbound: true });
                 idx = targetIncomingLinks.indexOf(linkView.model);
@@ -178,19 +197,19 @@ define(function(require) {
                     }
 
                     // Invalid if output-port has more than one outgoing link (if not destination)
-                    if (magnetS.getAttribute('class') === 'output-port' &&
-                        cellViewS.model.attr('metadata/name') !== 'destination') {
-                        for (i = 0; i < outgoingSourceLinks.length; i++) {
-                            var selector = outgoingSourceLinks[i].get('source').selector;
-                            // Another link from the 'output-port' is present
-                            if (selector) {
-                                var port = cellViewS.el.querySelector(selector);
-                                if (port && port.getAttribute('class') === 'output-port') {
-                                    return false;
-                                }
-                            }
-                        }
-                    }
+                    // if (magnetS.getAttribute('class') === 'output-port' &&
+                    //     cellViewS.model.attr('metadata/name') !== 'destination') {
+                    //     for (i = 0; i < outgoingSourceLinks.length; i++) {
+                    //         var selector = outgoingSourceLinks[i].get('source').selector;
+                    //         // Another link from the 'output-port' is present
+                    //         if (selector) {
+                    //             var port = cellViewS.el.querySelector(selector);
+                    //             if (port && port.getAttribute('class') === 'output-port') {
+                    //                 return false;
+                    //             }
+                    //         }
+                    //     }
+                    // }
                 }
 
                 // All checks passed, valid connection.
@@ -315,9 +334,9 @@ define(function(require) {
                     range: element.attr('range')
                 });
             }
-            if (outgoing.length !== 1) {
+            if (outgoing.length === 0) {
                 errors.push({
-                    message: outgoing.length === 0 ? 'Should direct its output to an app' : 'Output should be directed to only one app',
+                    message: 'Should direct its output to an app',
                     range: element.attr('range')
                 });
             }
@@ -330,9 +349,9 @@ define(function(require) {
                     range: element.attr('range')
                 });
             }
-            if (outgoing.length !== 1) {
+            if (outgoing.length === 0) {
                 errors.push({
-                    message: outgoing.length === 0 ? 'Should direct its output to an app' : 'Output should be directed to only one app',
+                    message: 'Should direct its output to an app',
                     range: element.attr('range')
                 });
             }
@@ -387,9 +406,9 @@ define(function(require) {
                     range: element.attr('range')
                 });
             }
-            if (outgoing.length !== 1) {
+            if (outgoing.length === 0) {
                 errors.push({
-                    message: outgoing.length === 0 ? 'Should direct its output to an app' : 'Output should be directed to only one app',
+                    message: 'Should direct its output to an app',
                     range: element.attr('range')
                 });
             }

@@ -125,10 +125,6 @@ input.btn.ng-invalid {
   cursor: pointer;
 }
 
-.tap-port {
-  cursor: pointer;
-}
-
 [magnet=true]:not(.element) {
   cursor: pointer;
 }
@@ -319,6 +315,11 @@ input.btn.ng-invalid {
   fill: @flo-shape-fill-color;
 }
 
+.destination .box {
+  stroke: @spring-green;
+  fill: @flo-shape-fill-color;
+}
+
 .table .flow-view {
   height: 225px;
 }
@@ -389,6 +390,37 @@ input.btn.ng-invalid {
   fill: #777777;
 }
 
+
+.connection.primary-output-from-app {
+  stroke: #000000;
+  stroke-dasharray: 1,0;
+}
+
+.marker-source.primary-output-from-app {
+  stroke: #000000;
+  fill: #000000;
+}
+
+.marker-target.primary-output-from-app {
+  stroke: #000000;
+  fill: #000000;
+}
+
+.connection.tapped-output-from-app {
+  stroke: #777777;
+  stroke-dasharray: 5,2;
+}
+
+.marker-source.tapped-output-from-app {
+  stroke: #777777;
+  fill: #777777;
+}
+
+.marker-target.tapped-output-from-app {
+  stroke: #777777;
+  fill: #777777;
+}
+
 // Link Tools handle shows up on a link in Composed Task editor
 .link-tool.composed-task .tool-options {
   display: block;
@@ -408,6 +440,14 @@ input.btn.ng-invalid {
   animation: flash-stroke-width 2s linear infinite;
 }
 
+// Stream modules DnD shape animation
+.dnd-source-feedback .destination .box {
+  animation: flash-stroke-width 2s linear infinite;
+}
+.dnd-target-feedback .destination .box {
+  animation: flash-stroke-width 2s linear infinite;
+}
+
 // Composed Task DnD shape animation
 .dnd-source-feedback .composed-task .border {
   animation: flash-stroke-width 2s linear infinite;
@@ -423,16 +463,10 @@ input.btn.ng-invalid {
 .dnd-source-feedback.output-port {
   animation: flash-stroke-width 2s linear infinite;
 }
-.dnd-source-feedback.tap-port {
-  animation: flash-stroke-width 2s linear infinite;
-}
 .dnd-target-feedback.input-port {
   animation: flash-stroke-width 2s linear infinite;
 }
 .dnd-target-feedback.output-port {
-  animation: flash-stroke-width 2s linear infinite;
-}
-.dnd-target-feedback.tap-port {
   animation: flash-stroke-width 2s linear infinite;
 }
 

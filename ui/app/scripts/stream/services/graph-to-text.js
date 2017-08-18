@@ -81,6 +81,9 @@ define(function () {
 
 	function getName(node) {
 		if (!node) {return 'UNDEFINED';}
+		if (node.incomingtap) {
+			return 'TAPPED(' + getName(node.incomingtap) + ')';
+		}
 		var name = node.attr('metadata/name');
 		if (name === 'destination') {
 			return node.attr('props').name;
@@ -116,7 +119,7 @@ define(function () {
 	}
     
     function isTapLink(link) {
-        return link.get('source').port === 'tap';
+		return link.attr('props/isTapLink') === 'true';
     }
     
 	function printStream(stream) {
@@ -136,6 +139,40 @@ define(function () {
 		return g.getConnectedLinks(node, {inbound: true});
 	}
 
+
+	function getNonPrimaryLinks(links) {
+		var nonPrimaryLinks = [];
+		for (var i = 0; i < links.length; i++) {
+			if (isTapLink(links[i])) { 
+				nonPrimaryLinks.push(links[i]);
+			}
+		}
+		return nonPrimaryLinks;
+	}
+
+	function getNonPrimaryIncomingLinks(node) {
+		return getNonPrimaryLinks(getIncomingLinks(node));
+	}
+
+	function getPrimaryLink(links) {
+		for (var i = 0; i < links.length; i++) {
+			if (!isTapLink(links[i])) { 
+				return links[i];
+			}
+		}
+		return null;
+	}
+
+	function getPrimaryIncomingLink(node) {
+		var incomingLinks = getIncomingLinks(node);
+		for (var i = 0; i < incomingLinks.length; i++) {
+			if (!isTapLink(incomingLinks[i])) { 
+				return incomingLinks[i];
+			}
+		}
+		return null;
+	}
+
 	function getOutgoingStreamLinks(node) {
 		var links = [];
 		// !node only possible if call is occurring during link drawing (one end connected but not the other)
@@ -143,20 +180,6 @@ define(function () {
 			g.getConnectedLinks(node, {outbound: true}).forEach(function(link) {
 				var source = link.get('source');
 				if (source.port === 'output') {
-					links.push(link);
-				}
-			});
-		}
-		return links;
-	}
-
-	function getOutgoingTapLinks(node) {
-		var links = [];
-		// !node only possible if call is occurring during link drawing (one end connected but not the other)
-		if (node) {
-			g.getConnectedLinks(node, {outbound: true}).forEach(function(link) {
-				var source = link.get('source');
-				if (source.port === 'tap') {
 					links.push(link);
 				}
 			});
@@ -190,27 +213,38 @@ define(function () {
 		if (!appname) {
 			appname = node.attr('metadata/name');
 		}
-		return COLON_PREFIX+findStreamName(node)+'.'+appname;
+		if (appname === 'destination') {
+			return COLON_PREFIX + node.attr('props/name');
+		} else {
+			return COLON_PREFIX+findStreamName(node)+'.'+appname;
+		}
 	}
 
 	/**
 	 * @return true if any node in this stream is tapped
 	 */
 	function isTapped(headNode) {
-		var outgoingTaps = getOutgoingTapLinks(headNode);
-		if (outgoingTaps.length!==0) {
-			return true;
+		if (isChannel(headNode)) {
+			return false;
 		}
 		var outgoingLinks = getOutgoingStreamLinks(headNode);
+		if (outgoingLinks.length > 1) { // multiple outputs, someone is tapping
+			return true;
+		}
 		while (outgoingLinks.length !== 0) {
 			var nextId = outgoingLinks[0].get('target').id;
 			if (!nextId) { break; } // link is currently being edited
 			var nextNode = g.getCell(nextId);
-			outgoingTaps = getOutgoingTapLinks(nextNode);
-			if (outgoingTaps.length!==0) {
+			if (isTapLink(outgoingLinks[0])) {
 				return true;
 			}
+			if (isChannel(nextNode)) {
+				break;
+			}
 			outgoingLinks = getOutgoingStreamLinks(nextNode);
+			if (outgoingLinks.length > 1) {
+				return true;
+			}
 		}
 		return false;
 	}
@@ -222,17 +256,31 @@ define(function () {
 	 * consider the destination a head.
 	 */
 	function findHead(node) {
+		console.log('findHead for '+getName(node));
 		var currentNode = node;
-		var inLinks = getIncomingLinks(currentNode);
-		while (!isChannel(currentNode) && 
-			   inLinks.length > 0 && !(inLinks.length === 1 && isTapLink(inLinks[0]))) {
-			var sourceId = inLinks[0].get('source').id;
+		var incomingTapLinks = getNonPrimaryIncomingLinks(node);
+		if (incomingTapLinks.length > 0) {
+			return node;
+		}
+		var inLink = getPrimaryIncomingLink(currentNode);
+		// Only stop at a channel if have followed at least one link
+		while (!(isChannel(currentNode) && currentNode !== node) && inLink) {
+			var sourceId = inLink.get('source').id;
 			if (!sourceId) {
 				// the link to this node is currently being edited, it has not yet been connected to something
-				inLinks = [];
+				inLink = null;
 			} else {
+				// Don't follow back up if the link is not the primary one from that node
+				// to this node
+				// var possibleCurrentNode = g.getCell(sourceId);
+				// var outLinks = getOutgoingStreamLinks(possibleCurrentNode);
+				// var indexOfLinkBeingFollowedInOutputLinks = outLinks.indexOf(inLinks[0]);
+				// if (indexOfLinkBeingFollowedInOutputLinks !== 0) {
+				// 	// This 'currentNode' is the start of a tap
+				// 	break;
+				// }
 				currentNode = g.getCell(sourceId);
-				inLinks = getIncomingLinks(currentNode);
+				inLink = getPrimaryIncomingLink(currentNode);
 			}
 		}
 		return currentNode;
@@ -296,6 +344,7 @@ define(function () {
 		// 1. Find the obvious stream heads. A stream head is:
 		//    - any node without an incoming link
 		//    - any node where the incoming link is a tap link
+		//    - any node where the incoming link is a non primary link from an app (not destination)
 		//    - any destination node that has an incoming and outgoing link(s)
 		var i;
 		var streamheads=[];
@@ -318,41 +367,137 @@ define(function () {
 		var stream;
 		while (streamheads.length>0) {
 			var headNode = streamheads.shift();
+			if (DEBUG) {
+				console.log('Visiting '+getName(headNode));
+			}
 
 			if (isTapped(headNode)) {
-				// Needs a name
+				// This stream is tapped, it must be named (name generated if necessary)
 				var streamName = headNode.attr('stream-name');
 				if (!streamName) {
 					headNode.attr('stream-name','STREAM_'+streamId);
 				}
 			}
-
-			// stream = [headNode];
 			var outgoingLinks = getOutgoingStreamLinks(headNode);
 			var toFollow;
+			var target;			
+			var incomingTapLinks = getNonPrimaryIncomingLinks(headNode);
 			// If the head is a destination it may have multiple outbound connections, create a stream for each
-			for (var ol = 0; ol < outgoingLinks.length; ol++) {
-				stream = [headNode];
-
-				toFollow = [];
-				toFollow.push(outgoingLinks[ol]);
-				while (toFollow.length > 0) {
-					var targetId = toFollow[0].get('target').id;
-					if (!targetId) {
-						// This link is not yet connected to something, it is currently being edited
-						toFollow = [];
-					} else {
-						var target = g.getCell(targetId);
-						stream.push(target);
-						toFollow = getOutgoingStreamLinks(target);
-						if (isChannel(target)) {
-							// Reached a channel with following outputs, that marks the end of this stream
-							toFollow = [];
+			if (outgoingLinks.length === 0) {
+				if (incomingTapLinks.length === 0) {
+					stream = [headNode];
+					streamId++;
+					streams.push(stream);
+				}
+				else {
+					// Create one variant per incoming tap link 
+					for (i=0;i<incomingTapLinks.length;i++) {
+						stream = [{'incomingtap':g.getCell(incomingTapLinks[i].get('source').id)}];
+						stream.push(headNode);
+						streamId++;
+						streams.push(stream);
+					}
+				}
+			} else {
+				// var incomingTapLinks = getNonPrimaryIncomingLinks(headNode);
+				// if (incomingTapLinks.length !== 0) {
+				// 	stream = [headNode];
+				// 	streamId++;
+				// 	streams.push(stream);
+				// }
+				var targetId;
+				var ol;
+				if (incomingTapLinks.length > 0) {
+				for (i=0;i<incomingTapLinks.length;i++) {
+					// Only need to get clever i
+					for (ol = 0; ol < outgoingLinks.length; ol++) {
+						stream = [{'incomingtap':g.getCell(incomingTapLinks[i].get('source').id)}];
+						stream.push(headNode);
+						toFollow = getPrimaryLink(outgoingLinks);
+						// toFollow.push(outgoingLinks[ol]);
+						while (toFollow) {
+							targetId = toFollow.get('target').id;
+							if (!targetId) {
+								// This link is not yet connected to something, it is currently being edited
+								toFollow = null;
+							} else {
+								target = g.getCell(targetId);
+								stream.push(target);
+								toFollow = getPrimaryLink(getOutgoingStreamLinks(target));
+								if (isChannel(target)) {
+									// Reached a channel with following outputs, that marks the end of this stream
+									toFollow = null;
+								}
+							}
+						}
+						streamId++;
+						streams.push(stream);
+						if (!isChannel(headNode)) {
+							// Don't follow more than the primary link, the other links will be taps
+							break;
 						}
 					}
 				}
-				streamId++;
-				streams.push(stream);
+			} else {
+				for (ol = 0; ol < outgoingLinks.length; ol++) {
+					stream = [headNode];
+					toFollow = getPrimaryLink(outgoingLinks);
+					// toFollow.push(outgoingLinks[ol]);
+					while (toFollow) {
+						targetId = toFollow.get('target').id;
+						if (!targetId) {
+							// This link is not yet connected to something, it is currently being edited
+							toFollow = null;
+						} else {
+							target = g.getCell(targetId);
+							stream.push(target);
+							toFollow = getPrimaryLink(getOutgoingStreamLinks(target));
+							if (isChannel(target)) {
+								// Reached a channel with following outputs, that marks the end of this stream
+								toFollow = null;
+							}
+						}
+					}
+					streamId++;
+					streams.push(stream);
+					if (!isChannel(headNode)) {
+						// Don't follow more than the primary link, the other links will be taps
+						break;
+					}
+				}
+			}
+				// if (isChannel(headNode) && getIncomingLinks(headNode).length !== 0) {
+				// 	// The channel is a stream in its own right
+				// 	stream=[headNode];
+				// 	streamId++;
+				// 	streams.push(stream);
+				// }
+				// var nonPrimaryLinks = getNonPrimaryLinks(outgoingLinks);
+				// for (var tapLink=0; tapLink<nonPrimaryLinks.length;tapLink++) {
+				// 	toFollow = nonPrimaryLinks[tapLink]; 
+				// 	stream = [];
+				// 	while (toFollow) {
+				// 		var targetId = toFollow.get('target').id;
+				// 		if (!targetId) {
+				// 			// This link is not yet connected to something, it is currently being edited
+				// 			toFollow = null;
+				// 		} else {
+				// 			var target = g.getCell(targetId);
+				// 			stream.push(target);
+				// 			toFollow = getPrimaryLink(getOutgoingStreamLinks(target));
+				// 			if (isChannel(target)) {
+				// 				// Reached a channel with following outputs, that marks the end of this stream
+				// 				toFollow = null;
+				// 			}
+				// 		}
+				// 	}
+				// 	streamId++;
+				// 	streams.push(stream);
+				// 	if (!isChannel(headNode)) {
+				// 		// Don't follow more than the primary link, the other links will be taps
+				// 		break;
+				// 	}
+				// }
 			}
 		}
 		if (DEBUG) {
@@ -376,29 +521,39 @@ define(function () {
 			for (i = 0; i < stream.length; i++) {
 				var node = stream[i];
 				if (i === 0) {
-					if (!isChannel(node) && node.attr('stream-name')) {
-						console.log('Stream has name ' + node.attr('stream-name'));
+					var whereToFindName = i;
+					if (node.incomingtap) {
+						whereToFindName++;
+					}
+					if (!isChannel(stream[whereToFindName]) && stream[whereToFindName].attr('stream-name')) {
+						console.log('Stream has name ' + stream[whereToFindName].attr('stream-name'));
 						text += node.attr('stream-name') + '=';
 					}
-					if (isChannel(node)) {//WithMultipleOutputLinks(node)) {
+					if (isChannel(stream[whereToFindName])) {
 						// stream name can be on next node
-						if ((i+1)<stream.length) {
-							var nameOnNextNode = stream[i+1].attr('stream-name');
+						if ((whereToFindName+1)<stream.length) {
+							var nameOnNextNode = stream[whereToFindName+1].attr('stream-name');
 							if (nameOnNextNode) {
 								text += nameOnNextNode + '=';
 							}
 						}
-					} else {
-						// This is what you use for 'tap heads' - it inserts the ':xxx.yyy >' bit on the front
-						var incomingLinks = getIncomingLinks(node);
-						if (incomingLinks.length > 0) {
-							var sourceId = incomingLinks[0].get('source').id;
-							if (sourceId) {
-								var source = g.getCell(sourceId);
-								text += toTapDestination(source) + ' > ';
-							}
-						}
 					}
+					if (node.incomingtap) {
+					// if ((i+1) >= stream.length) {
+						// This is what you use for 'tap heads' - it inserts the ':xxx.yyy >' bit on the front
+						// var incomingLinks = getNonPrimaryIncomingLinks(node);//getIncomingLinks(node);
+						// // TODO deal with multiple incoming ones!
+						// if (incomingLinks.length > 0) {
+						// 	var sourceId = incomingLinks[0].get('source').id;
+						// 	if (sourceId) {
+						// 		var source = g.getCell(sourceId);
+						// 		text += toTapDestination(source) + ' > ';
+						// 	}
+						// }
+						text+=toTapDestination(node.incomingtap) + ' > ';
+						continue;
+					}
+					// }
 				}
 				var nodeText = createTextForNode(node);
 
