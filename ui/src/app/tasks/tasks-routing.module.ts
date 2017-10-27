@@ -11,11 +11,14 @@ import { TaskAppDetailsComponent } from './task-app-details/task-app-details.com
 import { TaskCreateComponent } from './task-create/task-create.component';
 import { TaskBulkDefineComponent } from './task-bulk-define/task-bulk-define.component';
 import { TaskLaunchComponent } from './task-launch/task-launch.component';
+import { AuthGuard } from '../auth/support/auth.guard';
+import { ComposedTaskDetailsComponent } from './composed-task-details/composed-task-details.component';
 
 const taskRoutes: Routes = [
   {
     path: 'tasks',
     component: TasksComponent,
+    canActivate: [AuthGuard],
     data: {
       authenticate: true,
       roles: ['ROLE_VIEW'],
@@ -38,6 +41,11 @@ const taskRoutes: Routes = [
       {
           path: 'apps/:id/task-create',
           component: TaskCreateComponent,
+          canActivate: [AuthGuard],
+          data: {
+            authenticate: true,
+            roles: ['ROLE_CREATE']
+          },
       },
       {
           path: 'executions',
@@ -62,6 +70,10 @@ const taskRoutes: Routes = [
       {
         path: 'definitions/launch/:id',
         component: TaskLaunchComponent,
+      },
+      {
+        path: 'definitions/:id',
+        component: ComposedTaskDetailsComponent,
       }
     ]
   }

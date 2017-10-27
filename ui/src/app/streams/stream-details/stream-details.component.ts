@@ -3,6 +3,8 @@ import {ActivatedRoute, Router} from '@angular/router';
 import {StreamsService} from '../streams.service';
 import {ToastyService} from 'ng2-toasty';
 import {Subscription} from 'rxjs/Subscription';
+import {MetamodelService} from '../flo/metamodel.service';
+import {RenderService} from '../flo/render.service';
 
 @Component({
   selector: 'app-stream-details',
@@ -21,7 +23,9 @@ export class StreamDetailsComponent implements OnInit, OnDestroy {
   constructor(private route: ActivatedRoute,
               private router: Router,
               private streamsService: StreamsService,
-              private toastyService: ToastyService) {
+              private toastyService: ToastyService,
+              public metamodelService: MetamodelService,
+              public renderService: RenderService) {
   }
 
   ngOnInit() {
@@ -38,6 +42,8 @@ export class StreamDetailsComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     this.sub.unsubscribe();
     this.busy.unsubscribe();
+    // Invalidate cached metamodel, thus it's reloaded next time page is opened
+    this.metamodelService.clearCachedData();
   }
 
   goBack() {

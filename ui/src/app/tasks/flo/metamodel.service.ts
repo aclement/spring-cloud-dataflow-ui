@@ -2,108 +2,111 @@ import { Flo } from 'spring-flo';
 import { Injectable } from '@angular/core';
 import { ApplicationType } from '../../shared/model/application-type';
 import { SharedAppsService } from '../../shared/services/shared-apps.service';
-import { CONTROLNODES_GROUP_TYPE } from './support/shapes';
-import { Http } from '@angular/http';
-import { HttpUtils } from '../../shared/support/http.utils';
-import { Observable } from 'rxjs/Observable';
+import { CONTROL_GROUP_TYPE, START_NODE_TYPE, END_NODE_TYPE, SYNC_NODE_TYPE, TASK_GROUP_TYPE } from './support/shapes';
+import { ToolsService } from './tools.service';
+import {Graph, Link, Node, TaskConversion} from './model/models';
+import { AppMetadata } from '../../shared/flo/support/app-metadata';
 
-class TaskAppMetadata implements Flo.ElementMetadata {
+import * as _joint from 'jointjs';
+const joint: any = _joint;
 
-  private _propertiesPromise: Promise<Map<string, Flo.PropertyMetadata>>;
-
-  constructor(
-    private _group: string,
-    private _name: string,
-    private _metadata?: Flo.ExtraMetadata
-  ) {}
-
-  get propertiesPromise(): Promise<Map<string, Flo.PropertyMetadata>> {
-    return this._propertiesPromise;
-  }
-
-  get name(): string {
-    return this._name;
-  }
-
-  get group(): string {
-    return this._group;
-  }
-
-  properties(): Promise<Map<string, Flo.PropertyMetadata>> {
-    return this.propertiesPromise;
-  }
-
-  get(property: string): Promise<Flo.PropertyMetadata> {
-    return this.propertiesPromise.then(properties => properties.get(property));
-  }
-
-}
-
+/**
+ * Flo service class for its Metamodel used for composed tasks.
+ *
+ * @author Janne Valkealahti
+ * @author Alex Boyko
+ */
 @Injectable()
 export class MetamodelService implements Flo.Metamodel {
 
   private COMPOSED_TASK_LABEL = 'label';
 
+  private listeners: Array<Flo.MetamodelListener> = [];
+
   private request: Promise<Map<string, Map<string, Flo.ElementMetadata>>>;
 
   constructor(
     private appsService: SharedAppsService,
-    private http: Http
+    private toolsService: ToolsService
   ) {}
 
-  textToGraph(flo: Flo.EditorContext, dsl: string): Promise<any> {
-    flo.getGraph().clear();
-
-    const options = HttpUtils.getDefaultRequestOptions();
-    const json: Observable<any> = this.http.post('/tools/parseTaskTextToGraph',
-        JSON.stringify({ dsl: dsl || ' ', name: 'unknown' }), options)
-      .map(data => {
-        console.log('graphToText4', data);
-        return data.json();
+  /**
+   * Converts text dsl into flo graph representation.
+   *
+   * @param {Flo.EditorContext} flo the flo editor context
+   * @param {string} dsl the dsl
+   * @returns {Promise<any>} a promise when conversion has happened
+   */
+  textToGraph(flo: Flo.EditorContext, dsl: string = ''): Promise<any> {
+    return this.toolsService.parseTaskTextToGraph(dsl).toPromise()
+      .then(taskConversion => {
+        this.load().then(metamodel => {
+          this.buildGraphFromJson(flo, taskConversion, metamodel);
+        });
       });
-
-
-    return new Promise(resolve => {
-      json.toPromise().then(
-        (jsondata) => this.load().then(
-          (metamodel) => resolve(this.buildGraphFromJson(flo, jsondata.graph, metamodel))));
-    });
   }
 
+  /**
+   * Converts graph in editor context into dsl. Return a dsl within a
+   * promise.
+   *
+   * @param {Flo.EditorContext} flo the flo editor context
+   * @returns {Promise<string>} a promise when conversion has happened
+   */
   graphToText(flo: Flo.EditorContext): Promise<string> {
     const graphInInternalFormat = flo.getGraph();
-    const graphInCommonFormat = this.toCommonGraphFormat(graphInInternalFormat);
-    console.log('graphToText1', graphInCommonFormat);
-    console.log('graphToText2', JSON.stringify(graphInCommonFormat));
-
-    const options = HttpUtils.getDefaultRequestOptions();
-    const dsl: Observable<any> = this.http.post('/tools/convertTaskGraphToText',
-        JSON.stringify(graphInCommonFormat), options)
-      .map(data => {
-        console.log('graphToText3', data);
-        return data.json().dsl;
-      });
-    return dsl.toPromise();
+    if (flo.getGraph().getElements().length === 0) {
+      return Promise.resolve('');
+    }
+    const graphInCommonFormat = this.toGraph(graphInInternalFormat);
+    return this.toolsService.convertTaskGraphToText(graphInCommonFormat)
+      .map(taskConversion => {
+        return taskConversion.dsl;
+      }).toPromise();
   }
 
+  subscribe(listener: Flo.MetamodelListener) {
+    this.listeners.push(listener);
+  }
+
+  unsubscribe?(listener: Flo.MetamodelListener) {
+    const index = this.listeners.indexOf(listener);
+    if (index >= 0) {
+      this.listeners.splice(index);
+    }
+  }
+
+  /**
+   * Loads element metadata. For now just delegates to refresh.
+   *
+   * @returns {Promise<Map<string, Map<string, Flo.ElementMetadata>>>}
+   */
   load(): Promise<Map<string, Map<string, Flo.ElementMetadata>>> {
-    return this.refresh();
+    return this.request ? this.request : this.refresh();
   }
 
+  /**
+   * Gets a supported group types in a palette.
+   *
+   * @returns {Array<string>} a group types
+   */
   groups(): Array<string> {
-    return [CONTROLNODES_GROUP_TYPE, 'task'];
+    return [CONTROL_GROUP_TYPE, TASK_GROUP_TYPE];
   }
 
+  /**
+   * Refresh element metadata.
+   *
+   * @returns {Promise<Map<string, Map<string, Flo.ElementMetadata>>>} a promise for metamodel
+   */
   refresh(): Promise<Map<string, Map<string, Flo.ElementMetadata>>> {
     const metamodel = new Map<string, Map<string, Flo.ElementMetadata>>();
+    this.addLinksGroup(metamodel);
     this.addOtherGroup(metamodel);
-    return new Promise(resolve => {
-      this.appsService.getApps({page: 0, size: 1000}).subscribe(
+    return this.request = new Promise(resolve => {
+      this.appsService.getApps({page: 0, size: 1000}, ApplicationType.task).subscribe(
         data => {
-          data.items.filter(item => {
-            return item.type.toString() === ApplicationType[ApplicationType.task];
-          }).forEach(item => {
-
+          data.items.forEach(item => {
             if (!metamodel.has(item.type.toString())) {
               metamodel.set(item.type.toString(), new Map<string, Flo.ElementMetadata>());
             }
@@ -126,36 +129,55 @@ export class MetamodelService implements Flo.Metamodel {
 
   private addOtherGroup(metamodel: Map<string, Map<string, Flo.ElementMetadata>>): void {
     const elements = new Map<string, Flo.ElementMetadata>()
-      .set('START', this.createMetadata('START',
-        CONTROLNODES_GROUP_TYPE,
+      .set(START_NODE_TYPE, this.createMetadata(START_NODE_TYPE,
+        CONTROL_GROUP_TYPE,
         'Start element for the composed task. Global options for the task are set on this element.',
-        new Map<string, Flo.PropertyMetadata>(), {
+        new Map<string, Flo.PropertyMetadata>().set('timeout', {
+          id: 'timeout',
+          name: 'timeout',
+          defaultValue: null,
+          description: 'Execution timeout',
+          type: 'java.lang.Long'
+        }), {
           'noPaletteEntry': true,
-          'fixed-name': true,
         })
       )
-      .set('END', this.createMetadata('END',
-        CONTROLNODES_GROUP_TYPE,
+      .set(END_NODE_TYPE, this.createMetadata(END_NODE_TYPE,
+        CONTROL_GROUP_TYPE,
         'End element for a flow or the entire composed task.',
         new Map<string, Flo.PropertyMetadata>(), {
           'noPaletteEntry': true,
-          'fixed-name': true,
+          'noEditableProps': true
         })
       )
-      .set('sync', this.createMetadata('sync',
-        CONTROLNODES_GROUP_TYPE,
+      .set(SYNC_NODE_TYPE, this.createMetadata(SYNC_NODE_TYPE,
+        CONTROL_GROUP_TYPE,
         'After a split, a sync node pulls the threads of parallel tasks back together',
         new Map<string, Flo.PropertyMetadata>(), {
-          'fixed-name': true,
+          'noEditableProps': true
         })
       );
-    metamodel.set(CONTROLNODES_GROUP_TYPE, elements);
+    metamodel.set(CONTROL_GROUP_TYPE, elements);
+  }
+
+  addLinksGroup(metamodel: Map<string, Map<string, Flo.ElementMetadata>>): void {
+    const metadata = this.createMetadata('transition', 'links', 'Transition between tasks',
+      new Map<string, Flo.PropertyMetadata>().set('ExitStatus', {
+        id: 'ExitStatus',
+        name: 'Exit Status',
+        defaultValue: '',
+        description: 'Exit status triggering transition to alternate task flow route'
+      }), {
+        unselectable: true
+      });
+    metamodel.set(metadata.group, new Map<string, Flo.ElementMetadata>().set(metadata.name, metadata));
   }
 
   private createEntry(type: ApplicationType, name: string, metadata?: Flo.ExtraMetadata): Flo.ElementMetadata {
-    return new TaskAppMetadata(
+    return new AppMetadata(
       type.toString(),
       name,
+      this.appsService.getAppInfo(type, name),
       metadata
     );
   }
@@ -173,140 +195,107 @@ export class MetamodelService implements Flo.Metamodel {
 
   }
 
-  private toCommonGraphFormat(graphInInternalFormat) {
+  private toGraph(graphInInternalFormat): Graph {
     const elements = graphInInternalFormat.attributes.cells.models;
-    const nodes = [];
-    const links = [];
-    let globalOptions;
+
+    const nodes: Array<Node> = new Array();
+    const links: Array<Link> = new Array();
+
     for (let i = 0; i < elements.length; i++) {
       const element = elements[i];
-      if (element.attributes.type === 'sinspctr.IntNode') {
+      if (element.get('type') === joint.shapes.flo.NODE_TYPE) {
         const attrs = element.attributes.attrs;
-        const newNode = {};
-        newNode['name'] = attrs.metadata.name;
-        newNode['id'] = element.attributes.id;
-        if (element.attributes.attrs.props) {
-          if (newNode['name'] === 'START') {
-            // Global options are held on the START node during graph editing
-            globalOptions = element.attributes.attrs.props;
-          } else {
-            newNode['properties'] = element.attributes.attrs.props;
-            if (element.attr('node-label')) {
-              newNode['metadata'] = {};
-              newNode['metadata'][this.COMPOSED_TASK_LABEL] = element.attr('node-label');
-            }
-          }
+        const metadata = {};
+        if (element.attr('node-label')) {
+          metadata[this.COMPOSED_TASK_LABEL] = element.attr('node-label');
         }
-        nodes.push(newNode);
-      } else if (element.attributes.type === 'sinspctr.Link' || element.attributes.type === 'link') {
-        const newlink = {'from': element.attributes.source.id, 'to': element.attributes.target.id};
-        if (element.attributes.attrs.metadata && element.attributes.attrs.props &&
-          element.attributes.attrs.props.ExitStatus) {
-          newlink['properties'] = {'transitionName': element.attributes.attrs.props.ExitStatus};
+        nodes.push(new Node(element.attributes.id, attrs.metadata.name, element.attributes.attrs.props, metadata));
+      } else if ((element.get('type') === joint.shapes.flo.LINK_TYPE)
+        && element.get('source').id && element.get('target').id) {
+        const properties = {};
+        if (element.attr('metadata') && element.attr('props/ExitStatus')) {
+          properties['transitionName'] = element.attr('props/ExitStatus');
         }
-        links.push(newlink);
+        links.push(new Link(element.get('source').id, element.get('target').id, properties));
       }
     }
-    const graph = {'nodes': nodes, 'links': links};
-    if (globalOptions) {
-      graph['properties'] = globalOptions;
-    }
-    return graph;
+    return new Graph(nodes, links);
   }
 
-  private buildGraphFromJson(flo, jsonFormatData, metamodel) {
-    if (jsonFormatData === undefined || jsonFormatData === null) {
+  private buildGraphFromJson(flo: Flo.EditorContext, conversion: TaskConversion, metamodel: Map<string, Map<string, Flo.ElementMetadata>>) {
+    if (conversion.graph === undefined || conversion.graph === null) {
       // TODO handle this better when we have service for metadata
+      if (!conversion.errors || conversion.errors.length === 0) {
+        // There is some text but with errors it may produce invalid graph. Keep the graph as is since it might be work in progress
+        flo.clearGraph();
+      }
       return;
     }
-    const inputnodes = jsonFormatData.nodes;
-    const inputlinks = jsonFormatData.links;
 
-    const incoming = {};
-    const outgoing = {};
-    let link;
-    for (let i = 0; i < inputlinks.length; i++) {
-      link = inputlinks[i];
-      if (typeof link.from === 'number') {
-        if (typeof outgoing[link.from] !== 'number') {
-          outgoing[link.from] = 0;
-        }
-        outgoing[link.from]++;
-      }
-      if (typeof link.to === 'number') {
-        if (typeof incoming[link.to] !== 'number') {
-          incoming[link.to] = 0;
-        }
-        incoming[link.to]++;
-      }
-    }
+    // Clear the graph completely including start and end node (they'll be re-created
+    flo.getGraph().clear();
+
+    const graph = conversion.graph;
+
+    const inputnodes = graph.nodes;
+    const inputlinks = graph.links;
 
     const inputnodesCount = inputnodes ? inputnodes.length : 0;
     const nodesIndex = [];
     const builtNodesMap = {};
     for (let n = 0; n < inputnodesCount; n++) {
       const name = inputnodes[n].name;
-      const label = inputnodes[n].label || inputnodes[n].name;
-      let group = inputnodes[n].group;
-      if (!group) {
-        // TODO matchGroup port as is doesn't work
-        // group = this.matchGroup(metamodel, name, incoming[n], outgoing[n]);
-        if (name === 'START' || name === 'END' || name === 'SYNC') {
-          group = 'control nodes';
-        } else {
-          group = 'task';
-        }
-      }
-      // TODO fix this metadata usage
-      // var metadata = metamodelUtils.getMetadata(metamodel, name, group);
-      // if (metadata.unresolved) {
-      //   metadata.metadata = {
-      //     titleProperty: 'metadata/name'
-      //   };
-      // }
-      const metadata = this.createMetadata(name, group, '', new Map<string, Flo.PropertyMetadata>());
 
-      let nodeProperties = inputnodes[n].properties;
+      // It makes more sense to hardcode these than create
+      // more complex logic by trying to parse from metadata
+      const label = inputnodes[n].name;
+      let group;
+      if (name === START_NODE_TYPE || name === END_NODE_TYPE || name === SYNC_NODE_TYPE) {
+        group = CONTROL_GROUP_TYPE;
+      } else {
+        group = TASK_GROUP_TYPE;
+      }
+
+      let metadata = metamodel.get(group).get(name);
+      if (!metadata) {
+        // Unknown element
+        metadata = this.createMetadata(name, group, '', new Map<string, Flo.PropertyMetadata>());
+        // Mark it "unresolved"
+        metadata.unresolved = true;
+      }
+
+      const properties = new Map<string, any>();
+      if (inputnodes[n].properties) {
+        Object.keys(inputnodes[n].properties).forEach(k => properties.set(k, inputnodes[n].properties[k]));
+      }
       const metadataProperties = inputnodes[n].metadata;
-      // Put the global properties onto the start node if there are any
-      if (n === 0 && name === 'START' && jsonFormatData.properties) {
-        nodeProperties = jsonFormatData.properties;
-      }
-      const newNode = flo.createNode(metadata, nodeProperties);
-      // Hang the properties off the start node!
-      newNode.attr('.label/text', label);
-      if (inputnodes[n].range) {
-        newNode.attr('range', inputnodes[n].range);
-      }
-      if (inputnodes[n].propertiesranges) {
-        newNode.attr('propertiesranges', inputnodes[n].propertiesranges);
-      }
-      if (inputnodes[n]['stream-id']) {
-        newNode.attr('stream-id', inputnodes[n]['stream-id']);
-      }
+      const newNode = flo.createNode(metadata, properties);
+
       if (metadataProperties && metadataProperties[this.COMPOSED_TASK_LABEL]) {
         newNode.attr('node-label', metadataProperties[this.COMPOSED_TASK_LABEL]);
       }
+
       nodesIndex.push(newNode.id);
       builtNodesMap[inputnodes[n].id] = newNode.id;
     }
 
+    let link;
     const inputlinksCount = inputlinks ? inputlinks.length : 0;
     for (let l = 0; l < inputlinksCount; l++) {
       link = inputlinks[l];
-      const props = {};
+      const props = new Map<string, any>();
       if (link.properties) {
-        // TODO fix when properties supported
         // Copy the transitionName from the properties in the JSON form
         // as task exit status in the built link
         // props.ExitStatus = link.properties.transitionName;
+        props.set('ExitStatus', link.properties.transitionName);
       }
       // TODO safe to delete from/to/nodesIndex now?
       const otherfrom = { 'id': builtNodesMap[link.from], 'selector': '.output-port'};
       const otherto = { 'id': builtNodesMap[link.to], 'selector': '.input-port'};
 
-      const metadata2 = this.createMetadata('link', 'links', '', new Map<string, Flo.PropertyMetadata>());
-      flo.createLink(otherfrom, otherto, metadata2, new Map<string, any>());
+      const metadata2 = metamodel.get('links').get('transition');
+      flo.createLink(otherfrom, otherto, metadata2, props);
     }
 
     flo.performLayout();
@@ -324,49 +313,8 @@ export class MetamodelService implements Flo.Metamodel {
 
   }
 
-  private matchGroup(metamodel, type, incoming, outgoing) {
-    // TODO simple port of this function doesn't work
-    console.log('matchGroup', type, incoming, outgoing);
-    incoming = typeof incoming === 'number' ? incoming : 0;
-    outgoing = typeof outgoing === 'number' ? outgoing : 0;
-    const matches = [];
-    let i;
-    if (type) {
-      for (i in metamodel) {
-        if (metamodel[i][type]) {
-          matches.push(metamodel[i][type]);
-        }
-      }
-    }
-    let group;
-    let score = Number.MIN_VALUE;
-    for (i = 0; i < matches.length; i++) {
-      const constraints = matches[i].constraints;
-      if (constraints) {
-        let failedConstraintsNumber = 0;
-        if (typeof constraints.maxOutgoingLinksNumber === 'number' && constraints.maxOutgoingLinksNumber < outgoing) {
-          failedConstraintsNumber++;
-        }
-        if (typeof constraints.minOutgoingLinksNumber === 'number' && constraints.minOutgoingLinksNumber > outgoing) {
-          failedConstraintsNumber++;
-        }
-        if (typeof constraints.maxIncomingLinksNumber === 'number' && constraints.maxIncomingLinksNumber < incoming) {
-          failedConstraintsNumber++;
-        }
-        if (typeof constraints.minIncomingLinksNumber === 'number' && constraints.minIncomingLinksNumber > incoming) {
-          failedConstraintsNumber++;
-        }
-
-        if (failedConstraintsNumber === 0) {
-          return matches[i].group;
-        } else if (failedConstraintsNumber > score) {
-          score = failedConstraintsNumber;
-          group = matches[i].group;
-        }
-      } else {
-        return matches[i].group;
-      }
-    }
-    return group;
+  clearCachedData() {
+    this.request = undefined;
   }
+
 }

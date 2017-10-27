@@ -1,6 +1,8 @@
-import { Component, OnInit, ViewEncapsulation } from '@angular/core';
+import {Component, OnDestroy, OnInit, ViewEncapsulation} from '@angular/core';
+import { Subscription } from 'rxjs/Subscription';
 import { Flo } from 'spring-flo';
 import { ParserService } from '../../shared/services/parser.service';
+import { Parser } from '../../shared/services/parser';
 import { MetamodelService } from '../flo/metamodel.service';
 import { RenderService } from '../flo/render.service';
 import { EditorService } from '../flo/editor.service';
@@ -8,15 +10,16 @@ import { BsModalService } from 'ngx-bootstrap';
 import { StreamCreateDialogComponent } from '../stream-create-dialog/stream-create-dialog.component';
 import { ContentAssistService } from '../flo/content-assist.service';
 import * as CodeMirror from 'codemirror';
+import { Subject } from 'rxjs/Subject';
 
 
 @Component({
   selector: 'app-stream-create',
   templateUrl: './stream-create.component.html',
-  styleUrls: [ '../flo/flo.scss' ],
+  styleUrls: [ '../../shared/flo/flo.scss' ],
   encapsulation: ViewEncapsulation.None
 })
-export class StreamCreateComponent implements OnInit {
+export class StreamCreateComponent implements OnInit, OnDestroy {
 
   dsl: string;
 
@@ -29,6 +32,14 @@ export class StreamCreateComponent implements OnInit {
   lintOptions: CodeMirror.LintOptions;
 
   validationMarkers: Map<string, Flo.Marker[]>;
+
+  parseErrors: Parser.Error[] = [];
+
+  contentValidated = false;
+
+  busy: Subscription;
+
+  initSubject: Subject<void>;
 
   constructor(public metamodelService: MetamodelService,
               public renderService: RenderService,
@@ -52,9 +63,30 @@ export class StreamCreateComponent implements OnInit {
                        options: CodeMirror.LintStateOptions,
                        editor: CodeMirror.Editor) => this.lint(content, updateLintingCallback, editor)
     };
+
+    this.initSubject = new Subject();
+    this.busy = this.initSubject.subscribe();
   }
 
   ngOnInit() {
+  }
+
+  ngOnDestroy() {
+    // Invalidate cached metamodel, thus it's reloaded next time page is opened
+    this.metamodelService.clearCachedData();
+  }
+
+  setEditorContext(editorContext: Flo.EditorContext) {
+    this.editorContext = editorContext;
+    if (this.editorContext) {
+      const subscription = this.editorContext.paletteReady.subscribe(ready => {
+        if (ready) {
+          subscription.unsubscribe();
+          this.initSubject.next();
+          this.initSubject.complete();
+        }
+      });
+    }
   }
 
   get gridOn(): boolean {
@@ -108,7 +140,7 @@ export class StreamCreateComponent implements OnInit {
     Array.from(this.validationMarkers.values())
       .filter(markers => Array.isArray(markers))
       .forEach(markers => markers
-        .filter(m => m.range && m.severity)
+        .filter(m => m.range && m.hasOwnProperty('severity'))
         .forEach(m => annotations.push({
           message: m.message,
           from: m.range.start,
@@ -117,12 +149,15 @@ export class StreamCreateComponent implements OnInit {
         }))
       );
     if (result.lines) {
-      result.lines.filter(l => Array.isArray(l.errors)).forEach(l => l.errors.forEach(e => annotations.push({
+      const newParseErrors = [];
+      result.lines.filter(l => Array.isArray(l.errors)).forEach(l => newParseErrors.push(...l.errors));
+      this.parseErrors = newParseErrors;
+      newParseErrors.forEach(e => annotations.push({
         from: e.range.start,
         to: e.range.end,
         message: e.message,
         severity: 'error'
-      })));
+      }));
     }
     updateLintingCallback(editor, annotations);
   }
@@ -150,6 +185,15 @@ export class StreamCreateComponent implements OnInit {
       pos--;
     }
     return pos;
+  }
+
+  get isCreateStreamsDisabled(): boolean {
+    if (this.dsl && this.contentValidated && this.parseErrors.length === 0) {
+      return Array.from(this.validationMarkers.values())
+        .find(markers => markers
+          .find(m => m.severity === Flo.Severity.Error) !== undefined) !== undefined;
+    }
+    return true;
   }
 
 }
