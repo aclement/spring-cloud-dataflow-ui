@@ -36,7 +36,7 @@ const DECORATION_ICON_MAP = new Map<string, string>()
 
 // Default icons (unicode chars) for each group member, unless they override
 const GROUP_ICONS = new Map<string, string>()
-  .set('app', '■') // U+25A0
+  .set('app', '⌸') // U+2338 (Quad equal symbol)
   .set('source', '⤇')// 2907
   .set('processor', 'λ') // 3bb  //flux capacitor? 1D21B
   .set('sink', '⤇') // 2907

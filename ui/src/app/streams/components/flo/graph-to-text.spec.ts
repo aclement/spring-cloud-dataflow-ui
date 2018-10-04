@@ -94,6 +94,49 @@ describe('graph-to-text', () => {
         expect(dsl).toEqual('time --aaa=bbb | log');
     });
 
+    it('non stream apps 1', () => {
+        const appA = createApp('appA');
+        dsl = convertGraphToText(graph);
+        expect(dsl).toEqual('appA');
+    });
+
+    it('non stream apps 2', () => {
+        const appA = createApp('appA');
+        const appB = createApp('appB');
+        dsl = convertGraphToText(graph);
+        expect(dsl).toEqual('appA, appB');
+    });
+
+    it('non stream apps with properties', () => {
+        const appA = createApp('appA');
+        setProperties(appA, new Map([['aaa', 'bbb']]));
+        const appB = createApp('appB');
+        dsl = convertGraphToText(graph);
+        expect(dsl).toEqual('appA --aaa=bbb, appB');
+    });
+
+    it('non stream apps with properties 2', () => {
+        const appA = createApp('appA');
+        setProperties(appA, new Map([['aaa', 'bbb']]));
+        const appB = createApp('appB');
+        const appC = createApp('appC');
+        setProperties(appC, new Map([['ccc', 'ddd']]));
+        setProperties(appC, new Map([['eee', 'fff']]));
+        dsl = convertGraphToText(graph);
+        expect(dsl).toEqual('appA --aaa=bbb, appB, appC --ccc=ddd --eee=fff');
+    });
+
+    it('mix apps/streams on graph', () => {
+        const timeSource = createSource('time');
+        setProperties(timeSource, new Map([['aaa', 'bbb'], ['ccc', 'ddd']]));
+        const logSink = createSink('log');
+        setProperties(logSink, new Map([['eee', 'fff']]));
+        createLink(timeSource, logSink);
+        const appA = createApp('appA');
+        dsl = convertGraphToText(graph);
+        expect(dsl).toEqual('time --aaa=bbb --ccc=ddd | log --eee=fff\nappA');
+    });
+
     it('basic - multiple properties', () => {
         const timeSource = createSource('time');
         setProperties(timeSource, new Map([['aaa', 'bbb'], ['ccc', 'ddd']]));
@@ -588,6 +631,10 @@ describe('graph-to-text', () => {
         const newTapNode: dia.Element = createNode('tap', 'tap');
         newTapNode.attr('props/name', tappedStreamAndApp);
         return newTapNode;
+    }
+
+    function createApp(appname: string): dia.Element {
+        return createNode(appname, 'app');
     }
 
     function createSource(appname: string): dia.Element {

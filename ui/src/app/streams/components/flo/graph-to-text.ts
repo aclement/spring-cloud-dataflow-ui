@@ -58,6 +58,7 @@ class GraphToTextConverter {
 
     public walkGraph(): string {
         const streams: dia.Cell[][] = [];
+        const appStream: dia.Cell[] = [];
         const tapStreams: number[] = [];
         let stream: dia.Cell[];
         for (let n = 0; n < this.nodeCount; n++) {
@@ -70,8 +71,12 @@ class GraphToTextConverter {
             // What to do depends on the combination of in/out links
             if (linksIn.length === 0) {
                 if (linksOut.length === 0) {
-                    // Isolated node, let's put it in the DSL so it is not lost, the graph is a work in progress.
-                    streams.push([node]);
+                    if (node.attr('metadata/group') === 'app') {
+                        appStream.push(node);
+                    } else {
+                        // Isolated node, let's put it in the DSL so it is not lost, the graph is a work in progress.
+                        streams.push([node]);
+                    }
                 } else {
                     if (this.areAllTapLinks(linksOut)) {
                         // Special case, a bit like above it is an isolated node (the stream is actually
@@ -121,6 +126,9 @@ class GraphToTextConverter {
                     }
                 }
             }
+        }
+        if (appStream.length !== 0) {
+            streams.push(appStream);
         }
 
         this.ensureStreamHeadsNamedWhereNecessary(streams, tapStreams);
@@ -218,7 +226,11 @@ class GraphToTextConverter {
                     if (this.isChannel(node) || this.isChannel(stream[i + 1])) {
                         text += ' > ';
                     } else {
-                        text += ' | ';
+                        if (node.attr('metadata/group') === 'app') {
+                            text += ', ';
+                        } else {
+                            text += ' | ';
+                        }
                     }
                 } else if (node.attr('metadata/name') === 'tap') {
                     text += ' >'; // the graph isn't well formed but convenient to put this on end of DSL
